@@ -10,10 +10,13 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 # Palavras que indicam uma data importante
-PALAVRAS_CHAVE = re.compile(r"\b(prova|trabalho|entrega|exame)\b", re.IGNORECASE)
+PALAVRAS_CHAVE = re.compile(
+    r"\b(prova|trabalho|entrega|exame|p1|p2|ps|g2|t1|t2|avaliação|avaliativa|substituição)\b",
+    re.IGNORECASE,
+)
 
-# Linha do cronograma com dia/mês e ano opcional (ex: "16 24/09/2026 ..." ou "14 17/9 ...")
-LINHA_AULA = re.compile(r"^(?:\d+|-)\s+(\d{1,2})/(\d{1,2})(?:/(\d{4}))?\s+(.+)$")
+# Reconhece datas no formato DD/MM ou DD/MM/YYYY em qualquer lugar da linha
+REGEX_DATA = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
 
 
 @dataclass
@@ -22,31 +25,19 @@ class Evento:
     titulo: str
 
 
-# Reconhece datas no formato DD/MM ou DD/MM/YYYY
-DATA_CELULA = re.compile(r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?$")
-
-
 def _linhas_das_tabelas(pagina) -> list[str]:
-    """
-    Lê as tabelas da página e devolve cada linha como "aula data conteúdo".
-    """
+    """Lê as tabelas da página e devolve o conteúdo de cada linha como texto simples."""
     linhas = []
     for tabela in pagina.extract_tables():
         for linha in tabela:
-            celulas = [" ".join((c or "").split()) for c in linha]
-            celulas = [c for c in celulas if c]
-            for i, celula in enumerate(celulas):
-                if DATA_CELULA.match(celula) and i + 1 < len(celulas):
-                    # Procura o número da aula nas células anteriores; se houver texto como "QUI", usa "-"
-                    aula = next((c for c in celulas[:i] if c.isdigit()), "-")
-                    conteudo = " ".join(celulas[i + 1:])
-                    linhas.append(f"{aula} {celula} {conteudo}")
-                    break
+            celulas = [" ".join((c or "").split()) for c in linha if c]
+            if celulas:
+                linhas.append(" ".join(celulas))
     return linhas
 
 
 def extrair_texto_pdf(caminho_pdf: str) -> str:
-    """Extrai o texto do PDF, usando as tabelas para as linhas do cronograma."""
+    """Extrai o texto do PDF, combinando o texto corrido e as tabelas."""
     import pdfplumber
 
     paginas = []
@@ -55,17 +46,14 @@ def extrair_texto_pdf(caminho_pdf: str) -> str:
             texto = pagina.extract_text() or ""
             linhas_tabela = _linhas_das_tabelas(pagina)
             if linhas_tabela:
-                texto = "\n".join(
-                    l for l in texto.splitlines() if not LINHA_AULA.match(l.strip())
-                )
                 texto += "\n" + "\n".join(linhas_tabela)
             paginas.append(texto)
     return "\n".join(paginas)
 
 
 def _descobrir_ano(texto: str) -> int:
-    """Procura 'SEMESTRE: 2026/2'. Se não achar, usa o ano atual."""
-    achou = re.search(r"SEMESTRE:\s*(\d{4})", texto)
+    """Procura 'SEMESTRE: 2026/2' ou ano de 4 dígitos. Se não achar, usa o ano atual."""
+    achou = re.search(r"\b(20\d{2})\b", texto)
     return int(achou.group(1)) if achou else date.today().year
 
 
@@ -81,32 +69,42 @@ def encontrar_eventos(texto: str, apenas_futuros: bool = True) -> list[Evento]:
     disciplina = _descobrir_disciplina(texto)
     hoje = date.today()
     eventos: list[Evento] = []
+    vistos = set()
 
     for linha in texto.splitlines():
-        achou = LINHA_AULA.match(linha.strip())
-        if not achou:
+        linha_limpa = linha.strip()
+        if not linha_limpa:
             continue
 
-        dia = int(achou.group(1))
-        mes = int(achou.group(2))
-        ano_cap = achou.group(3)
-        conteudo = achou.group(4)
+        match_data = REGEX_DATA.search(linha_limpa)
+        if match_data and PALAVRAS_CHAVE.search(linha_limpa):
+            dia = int(match_data.group(1))
+            mes = int(match_data.group(2))
+            ano_str = match_data.group(3)
 
-        if not PALAVRAS_CHAVE.search(conteudo):
-            continue
+            if ano_str:
+                ano = int(ano_str) if len(ano_str) == 4 else 2000 + int(ano_str)
+            else:
+                ano = ano_padrao
 
-        ano = int(ano_cap) if ano_cap else ano_padrao
+            try:
+                data_evento = date(ano, mes, dia)
+            except ValueError:
+                continue
 
-        try:
-            data_evento = date(ano, mes, dia)
-        except ValueError:
-            continue
+            if apenas_futuros and data_evento < hoje:
+                continue
 
-        if apenas_futuros and data_evento < hoje:
-            continue
+            chave = (data_evento, linha_limpa[:40])
+            if chave in vistos:
+                continue
+            vistos.add(chave)
 
-        resumo = conteudo.strip()[:70]
-        eventos.append(Evento(data_evento, f"{disciplina}: {resumo}"))
+            # Limpa o resumo retirando horários repetitivos se existirem
+            resumo = re.sub(r"\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b", "", linha_limpa).strip()
+            resumo = re.sub(r"\s+", " ", resumo)[:80]
+
+            eventos.append(Evento(data_evento, f"{disciplina}: {resumo}"))
 
     return eventos
 
