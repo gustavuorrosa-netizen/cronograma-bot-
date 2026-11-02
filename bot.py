@@ -31,6 +31,18 @@ def criar_email_interativo(disciplina: str, titulo_evento: str, data_str: str) -
             <hr style="border: none; border-top: 1px solid #eee; margin-top: 30px;">
             <p style="font-size: 12px; color: #bdc3c7; text-align: center;">Enviado automaticamente pelo seu Bot de Cronograma.</p>
         </div>
+        def enviar_email_interativo(assunto: str, html_corpo: str) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = assunto
+    msg["From"] = EMAIL_REMETENTE
+    msg["To"] = EMAIL_DESTINO
+    
+    # Define o conteúdo como HTML
+    msg.add_alternative(html_corpo, subtype="html")
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
+        servidor.login(EMAIL_REMETENTE, EMAIL_SENHA_APP)
+        servidor.send_message(msg)
     </body>
     </html>
     """
