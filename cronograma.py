@@ -64,12 +64,14 @@ def _descobrir_disciplina(texto: str) -> str:
 
 
 def encontrar_eventos(texto: str, apenas_futuros: bool = True) -> list[Evento]:
-    """Devolve a lista de provas/trabalhos/entregas encontrados no texto."""
+    """Devolve a lista de provas/trabalhos/entregas encontrados no texto sem duplicar datas."""
     ano_padrao = _descobrir_ano(texto)
     disciplina = _descobrir_disciplina(texto)
     hoje = date.today()
     eventos: list[Evento] = []
-    vistos = set()
+    
+    # Conjunto para controlar as datas que já foram adicionadas
+    datas_vistas = set()
 
     for linha in texto.splitlines():
         linha_limpa = linha.strip()
@@ -95,12 +97,12 @@ def encontrar_eventos(texto: str, apenas_futuros: bool = True) -> list[Evento]:
             if apenas_futuros and data_evento < hoje:
                 continue
 
-            chave = (data_evento, linha_limpa[:40])
-            if chave in vistos:
+            # EVITA DUPLICADOS: Se já existe um evento nesta mesma data, pula!
+            if data_evento in datas_vistas:
                 continue
-            vistos.add(chave)
+            datas_vistas.add(data_evento)
 
-            # Limpa o resumo retirando horários repetitivos se existirem
+            # Limpa o resumo retirando horários e espaços extras
             resumo = re.sub(r"\b\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\b", "", linha_limpa).strip()
             resumo = re.sub(r"\s+", " ", resumo)[:80]
 
